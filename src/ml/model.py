@@ -1,12 +1,13 @@
 
 from pathlib import Path
-
-import pandas as pd
-from xgboost import XGBClassifier
+import os
 
 
 # Load the trained model stored beside this file.
-MODEL_PATH = Path(__file__).with_name("bgp_sentinel_xgboost.json")
+MODEL_PATH = Path(os.getenv(
+    "BGP_MODEL_PATH",
+    Path(__file__).resolve().parents[2] / "models" / "bgp_sentinel_xgboost.json",
+))
 
 # These names and their order must match the training pipeline.
 FEATURES = [
@@ -35,10 +36,20 @@ def load_model():
                 f"Trained model not found: {MODEL_PATH}"
             )
 
+        from xgboost import XGBClassifier
+
         _model = XGBClassifier()
         _model.load_model(str(MODEL_PATH))
 
     return _model
+
+
+def model_status() -> dict:
+    """Return model availability without loading optional ML dependencies."""
+    return {
+        "path": str(MODEL_PATH),
+        "available": MODEL_PATH.exists(),
+    }
 
 
 def predict_anomaly(features: dict) -> dict:
@@ -60,6 +71,8 @@ def predict_anomaly(features: dict) -> dict:
         )
 
     # Preserve the exact feature order used during training.
+    import pandas as pd
+
     input_data = pd.DataFrame(
         [[features[name] for name in FEATURES]],
         columns=FEATURES,

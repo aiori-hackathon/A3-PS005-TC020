@@ -1,87 +1,138 @@
+import ipaddress
+from datetime import datetime
 
-import csv
-import gzip
-from pathlib import Path
-import mrtparse
 
-INPUT_FILE = Path("data/raw/updates.20261001.0000.gz")
-OUTPUT_FILE = Path("data/parsed/bgp_events.csv")
+def validate_prefix(prefix: str) -> str:
+    """Validate an IP prefix without silently normalizing host bits."""
+    if not isinstance(prefix, str):
+        raise ValueError("Prefix must be a string")
 
-OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        network = ipaddress.ip_network(prefix, strict=True)
+        return str(network)
+    except ValueError as exc:
+        raise ValueError(f"Invalid IP prefix: {prefix}") from exc
 
-def get_origin_as(path_attributes):
-    """Return the last AS in the final AS_PATH segment, if available."""
-    for attr in path_attributes:
-        attr_type = attr.get("type", {})
-        if 2 in attr_type:  # AS_PATH
-            segments = attr.get("value", [])
-            for segment in reversed(segments):
-                values = segment.get("value", [])
-                if values:
-                    return str(values[-1])
-    return ""
 
-rows_written = 0
+def validate_asn(asn) -> int:
+    """Validate an ASN, accepting integer and AS-prefixed string forms."""
+    if isinstance(asn, bool):
+        raise ValueError("ASN must be an integer, not a boolean")
 
-with gzip.open(INPUT_FILE, "rb") as f, \
-     OUTPUT_FILE.open("w", newline="", encoding="utf-8") as out:
+    if isinstance(asn, str):
+        asn = asn.strip().upper()
+        if asn.startswith("AS"):
+            asn = asn[2:]
+        if not asn.isdigit():
+            raise ValueError(f"Invalid ASN: {asn}")
 
-    writer = csv.DictWriter(
-        out,
-        fieldnames=[
-            "timestamp",
-            "peer_as",
-            "prefix",
-            "origin_as",
-            "event_type",
-            "is_synthetic",
-            "label"
-        ]
-    )
-    writer.writeheader()
+    try:
+        value = int(asn)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"Invalid ASN: {asn}") from exc
 
-    for entry in mrtparse.Reader(f):
-        record = entry.data
+    if isinstance(asn, float):
+        raise ValueError("ASN must not be a floating-point number")
 
-        # This parser currently handles BGP4MP UPDATE messages.
-        if "bgp_message" not in record:
-            continue
+    if not 1 <= value <= 4294967295:
+        raise ValueError(f"ASN out of range: {value}")
 
-        message = record["bgp_message"]
-        if message.get("type", {}).get(2) != "UPDATE":
-            continue
+    return value
 
-        timestamp = next(iter(record.get("timestamp", {})), "")
-        peer_as = record.get("peer_as", "")
 
-        attrs = message.get("path_attributes", [])
-        origin_as = get_origin_as(attrs)
+def parse_as_path(as_path) -> list[int]:
+    """Convert an AS path into a list of ASNs."""
+    if isinstance(as_path, str):
+        parts = as_path.split()
+    elif isinstance(as_path, (list, tuple)):
+        parts = as_path
+    else:
+        raise ValueError("AS path must be a string, list, or tuple")
 
-        # Newly announced prefixes.
-        for item in message.get("nlri", []):
-            writer.writerow({
-                "timestamp": timestamp,
-                "peer_as": peer_as,
-                "prefix": f'{item["prefix"]}/{item["length"]}',
-                "origin_as": origin_as,
-                "event_type": "announcement",
-                "is_synthetic": 0,
-                "label": ""
-            })
-            rows_written += 1
+    parsed = [validate_asn(asn) for asn in parts]
+    if len(parsed) != len(set(parsed)):
+        raise ValueError("AS path contains an ASN loop")
+    return parsed
 
-        # Withdrawals are recorded, but not labelled as anomalies.
-        for item in message.get("withdrawn_routes", []):
-            writer.writerow({
-                "timestamp": timestamp,
-                "peer_as": peer_as,
-                "prefix": f'{item["prefix"]}/{item["length"]}',
-                "origin_as": "",
-                "event_type": "withdrawal",
-                "is_synthetic": 0,
-                "label": ""
-            })
-            rows_written += 1
 
-print(f"Finished. Events written: {rows_written:,}")
-print(f"Output: {OUTPUT_FILE}")
+def extract_origin_as(as_path) -> int | None:
+    """Extract the origin ASN from a simple AS path."""
+    parsed_path = parse_as_path(as_path)
+
+    if not parsed_path:
+        return None
+
+    return parsed_path[-1]
+
+
+def parse_bgp_update(update: dict) -> dict:
+    """Normalize a decoded BGP update."""
+    if not isinstance(update, dict):
+        raise ValueError("BGP update must be a dictionary")
+
+    event_type = update.get("event_type")
+
+    if not isinstance(event_type, str):
+        raise ValueError("Missing or invalid event_type")
+
+    event_type = event_type.lower()
+    event_type = {
+        "a": "announcement",
+        "w": "withdrawal",
+    }.get(event_type, event_type)
+
+    if event_type not in {"announcement", "withdrawal"}:
+        raise ValueError(f"Unsupported event type: {event_type}")
+
+    prefix = validate_prefix(update.get("prefix"))
+    timestamp = update.get("timestamp")
+
+    if isinstance(timestamp, str):
+        try:
+            timestamp = datetime.fromisoformat(
+                timestamp.replace("Z", "+00:00")
+            ).timestamp()
+        except ValueError as exc:
+            raise ValueError("Timestamp must be Unix or ISO 8601") from exc
+    elif isinstance(timestamp, bool) or not isinstance(
+        timestamp, (int, float)
+    ):
+        raise ValueError("Timestamp must be numeric")
+
+    if timestamp < 0:
+        raise ValueError("Timestamp cannot be negative")
+
+    if event_type == "withdrawal":
+        return {
+            "timestamp": timestamp,
+            "event_type": "withdrawal",
+            "prefix": prefix,
+            "as_path": [],
+            "origin_as": None,
+            "peer_as": update.get("peer_as", update.get("peer_asn")),
+            "source": update.get("source", "api"),
+        }
+
+    as_path = parse_as_path(update.get("as_path", []))
+    supplied_origin = update.get("origin_as")
+    origin_as = extract_origin_as(as_path)
+
+    if supplied_origin is not None:
+        supplied_origin = validate_asn(supplied_origin)
+
+        if origin_as is not None and supplied_origin != origin_as:
+            raise ValueError(
+                "Supplied origin ASN does not match the AS path"
+            )
+
+        origin_as = supplied_origin
+
+    return {
+        "timestamp": timestamp,
+        "event_type": "announcement",
+        "prefix": prefix,
+        "as_path": as_path,
+        "origin_as": origin_as,
+        "peer_as": update.get("peer_as", update.get("peer_asn")),
+        "source": update.get("source", "api"),
+    }

@@ -5,3 +5,8 @@ xgboost
 matplotlib
 tqdm
 mrtparse
+pytest
+fastapi
+uvicorn
+psycopg[binary]
+python-dotenv
