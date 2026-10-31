@@ -169,17 +169,10 @@ application initialization once after applying the Supabase migration.
 
 ## Vercel deployment
 
-`api/index.py` is the ASGI entrypoint. In services mode,
-`vercel.json` deploys the `app` FastAPI service and the `frontend` Vite
-service under one Vercel project. `/api/*` is publicly rewritten to `app`,
-and all other paths are publicly rewritten to `frontend`. The frontend uses
-`/api` automatically in production and uses `http://127.0.0.1:8000` during
-local Vite development. Set `VITE_API_BASE_URL` if the backend is hosted
-elsewhere.
-
-There are no service bindings because the frontend calls the public `/api`
-route from the browser and the API connects directly to Supabase. Vercel
-services are not used for the Supabase connection.
+`api/index.py` is the ASGI entrypoint and `vercel.json` routes `/api/*` to the
+FastAPI application. The frontend uses `/api` automatically in production and
+uses `http://127.0.0.1:8000` during local Vite development. Set
+`VITE_API_BASE_URL` if the backend is hosted elsewhere.
 
 From the repository root:
 
