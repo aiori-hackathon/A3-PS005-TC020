@@ -1,3 +1,12 @@
+## Team Introduction Video
+Youtube Link - https://youtu.be/EGsV7reaN_A?si=DqGCYhcMbKtF8-A0
+
+## Project Explanation Video
+Level 2 YouTube Link- https://youtu.be/E7rG3AOshrs
+
+## Deployed Project Link
+https://aiori.vercel.app
+
 # Explainable BGP Origin and Subprefix Anomaly Monitor
 
 This project detects suspicious BGP announcements using operator inventory,
@@ -190,5 +199,3 @@ The API also exposes the deployment-oriented aliases `/api/analyze`,
 `/api/ingest`, `/api/replay`, `/api/upload-roa`, `/api/upload-inventory`, and
 `/api/ml/status` (the unprefixed local-development routes remain available).
 
-## Team Introduction Video
-Youtube Link - https://youtu.be/EGsV7reaN_A?si=DqGCYhcMbKtF8-A0
