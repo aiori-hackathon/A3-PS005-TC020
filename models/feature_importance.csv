@@ -1,0 +1,10 @@
+feature,importance
+rov_invalid,0.4809553
+has_observed_parent_prefix,0.21450394
+rov_notfound,0.13928048
+rov_valid,0.11298771
+has_observed_more_specific,0.030069016
+origin_mismatch,0.01300125
+prefix_length,0.009202345
+ip_version,0.0
+max_length_exceeded,0.0
